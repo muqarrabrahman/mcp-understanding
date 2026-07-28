@@ -1,0 +1,8 @@
+Aslase Practice Corp — Company Overview
+
+Departments: Engineering, Sales, Finance, HR.
+Mission: Build reliable software and support customers well.
+Headquarters: Remote-first, no physical office.
+
+For employee-specific details (headcount, salaries, department breakdowns),
+use the list_employees, get_employee, or department_salary_summary tools instead of this document.

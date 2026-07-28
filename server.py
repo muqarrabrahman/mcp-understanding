@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 
 import psycopg2
 import psycopg2.extras
@@ -115,6 +116,27 @@ def department_salary_summary() -> list[dict]:
         ORDER BY e.department
         """
     )
+
+
+@mcp.resource("employees://all", mime_type="text/csv")
+def all_employees_resource() -> str:
+    """All employees as a CSV document (read-only context, not a callable action)."""
+    rows = run_query(
+        """
+        SELECT employee_id, first_name, last_name, email, department, job_title, hire_date
+        FROM employee
+        ORDER BY employee_id
+        """
+    )
+    header = ",".join(rows[0].keys())
+    lines = [",".join(str(v) for v in row.values()) for row in rows]
+    return "\n".join([header] + lines)
+
+
+@mcp.resource("company://info", mime_type="text/plain")
+def company_info_resource() -> str:
+    """Static company info document, read from disk (not from the DB)."""
+    return pathlib.Path(__file__).parent.joinpath("company_info.txt").read_text()
 
 
 @mcp.resource("employees://{employee_id}", mime_type="application/json")

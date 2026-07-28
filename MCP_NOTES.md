@@ -18,13 +18,11 @@ MCP (Model Context Protocol) is a standard way for an AI assistant (the **client
 
 **Tools** — actions the LLM can *call* to do something (run code, query a DB, hit an API) and get a result back. Has side-effect potential. This is the only one we've used so far — `get_employee`, `list_employees`, etc., all defined with `@mcp.tool()`.
 
-**Resources** — data the client can *read* and hand to the LLM as context, addressed by a URI (like `employees://all`). More like "fetch a document" than "call a function" — no arguments to reason about, just data. We could add one with `@mcp.resource("employees://all")` that returns a full dump for the model to read directly instead of calling a tool.
+**Resources** — data the client can *read* and hand to the LLM as context, addressed by a URI (like `employees://all`). More like "fetch a document" than "call a function" — no arguments to reason about, just data. We added `employees://all` (a CSV dump, static — no `{param}`) and `employees://{employee_id}` (a *resource template* — the `{employee_id}` becomes a function argument, filled in per-request).
 
-**Prompts** — reusable, parameterized prompt templates the server offers, which the client can surface to the user as a shortcut (like a slash-command), e.g. "summarize this employee's salary history." Defined with `@mcp.prompt()`.
+**Prompts** — reusable, parameterized prompt templates the server offers, which the client can surface to the user as a shortcut (like a slash-command), e.g. "summarize this employee's salary history." We added `salary_review_prompt(employee_id)`, defined with `@mcp.prompt()`.
 
 **Simple analogy:** Tools = functions you call, Resources = files you read, Prompts = canned message templates you insert.
-
-**Why we only used Tools:** our use case is entirely "run this query and give me an answer" — actions, not raw documents to browse — so Tools was the natural fit.
 
 ---
 
@@ -144,3 +142,64 @@ Use it while actively building/debugging tools — it's the fastest feedback loo
 - **Claude Desktop** — add an entry under `mcpServers` in `claude_desktop_config.json` pointing to the same command/args. Then you just talk to it in natural language and the LLM decides which tool to call.
 
 All three are different **clients** speaking the same protocol to the same unchanged `server.py` — that's the whole point of a standard.
+
+---
+
+### Q10: How do I connect this server to Postman?
+
+1. New → **MCP Request**.
+2. Transport: `STDIO`.
+3. One single command field — interpreter + script together, not separate fields:
+   ```
+   D:\Aslase\Practice\MCP\venv\Scripts\python.exe D:\Aslase\Practice\MCP\server.py
+   ```
+4. Click **Connect** — Postman spawns `server.py` as a subprocess and does the `initialize` handshake for you.
+5. Click **Load capabilities** — sends `tools/list`, `resources/list`, `prompts/list` and populates the sidebar.
+6. Pick one (e.g. `get_employee`), fill in `employee_id`, hit **Run** — see the JSON result.
+
+**Gotcha:** a *resource template* (URI with `{param}`, like `employees://{employee_id}`) is a different protocol call (`resources/templates/list`) than a plain resource (`resources/list`). If you only register templates, Postman's "Resources" tab can show "No resources found" even though everything is working — check for a separate templates section before assuming it's broken.
+
+No extra config needed for `.env` — `server.py` loads it itself via `load_dotenv()` from its own folder, regardless of who launched it.
+
+---
+
+### Q11: How do I connect this with Claude Desktop?
+
+1. Install Claude Desktop, launch it once (creates `%APPDATA%\Claude`), then fully quit it.
+2. Open/create `%APPDATA%\Claude\claude_desktop_config.json` and add:
+   ```json
+   {
+     "mcpServers": {
+       "employee-salary-server": {
+         "command": "D:\\Aslase\\Practice\\MCP\\venv\\Scripts\\python.exe",
+         "args": ["D:\\Aslase\\Practice\\MCP\\server.py"]
+       }
+     }
+   }
+   ```
+   (merge into any existing `mcpServers` entries — don't overwrite them.)
+3. Restart Claude Desktop.
+4. Look for the tool/plug icon near the chat box — click it, `employee-salary-server` should be listed as connected with its tools/resources/prompts.
+5. Ask a plain-English question (e.g. "list employees in Engineering") — Claude's LLM reads the tool schemas and decides which one to call.
+
+---
+
+### Q12: What's the major difference between a Tool and a Resource?
+
+A **Tool** is an *action* the LLM decides to invoke, reasoning out its own arguments, potentially doing real work. A **Resource** is data at a *fixed address* that gets fetched as-is — no reasoning, just "get what's at this URI."
+
+**Example from our server:** `get_employee(employee_id=3)` (Tool) requires the LLM to *decide* to call it and *figure out* `employee_id` should be `3` from your question — that decision-making is the whole point of a tool. `employees://all` (Resource) has no decision involved — it's more like a document already sitting on the table that the client attaches as background context; the model just reads it.
+
+**Simple analogy:** Tool = calling someone and asking a specific question tailored to the situation. Resource = a document already in the room that anyone can pick up and read.
+
+---
+
+### Q13: Is resource content always available to the LLM? What's available all the time?
+
+Only **metadata** is available all the time — the list of tool names/schemas, resource names/URIs/descriptions, prompt names/args (fetched once via `list_tools` / `list_resources` / `list_prompts`). That's a menu, not the food — actual content requires an extra step, and who triggers that step differs:
+
+- **Tools** — fully LLM-driven. The model decides mid-conversation to call one, and the result comes back into that same turn automatically.
+- **Resources** — not automatic. The client (e.g. Claude Desktop) surfaces resources as attachable items, like attaching a file. A **user** has to pick "attach `employees://all`" before its content enters the LLM's context — the model can't silently pull it in on its own in most clients.
+- **Prompts** — also user-triggered, like picking a slash-command from a menu.
+
+**Example:** right after connecting, Claude "knows" `employees://all` exists the same way you know a name exists in a phone directory — it hasn't read the CSV. Ask "who's in Engineering?" and Claude calls the `list_employees` **tool**, getting the answer in that same turn. But the `employees://all` **resource**'s actual content only shows up if it's explicitly attached — same idea as attaching a PDF to a chat.
