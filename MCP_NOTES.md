@@ -10,7 +10,7 @@ MCP (Model Context Protocol) is a standard way for an AI assistant (the **client
 
 **Simple analogy:** it's like USB-C for AI tools. One standard connector — any compliant client can plug into any compliant server, no custom wiring needed.
 
-**Example:** our `server.py` exposes a `get_employee` tool. Any MCP client — Claude Desktop, Postman, the Inspector — can discover it and call it without us writing any client-specific integration code.
+**Example:** our `server_stdio.py` exposes a `get_employee` tool. Any MCP client — Claude Desktop, Postman, the Inspector — can discover it and call it without us writing any client-specific integration code.
 
 ---
 
@@ -36,13 +36,13 @@ A REST API is built for a developer who already knows the exact endpoints (e.g. 
 
 ### Q4: What's the difference between stdio and HTTP transport?
 
-**stdio** — the client starts your server as a local subprocess and they talk by writing JSON-RPC messages directly to its stdin/stdout. No network, no port. Only works when client and server are on the *same machine*. This is what our `server.py` uses (`mcp.run()` defaults to stdio) — that's why running it alone just hangs with no output: it's waiting for a client to spawn it and start writing to its stdin.
+**stdio** — the client starts your server as a local subprocess and they talk by writing JSON-RPC messages directly to its stdin/stdout. No network, no port. Only works when client and server are on the *same machine*. This is what our `server_stdio.py` uses (`mcp.run()` defaults to stdio) — that's why running it alone just hangs with no output: it's waiting for a client to spawn it and start writing to its stdin.
 
-**HTTP** (the modern "Streamable HTTP" transport) — the server runs on its own, listening on a network port/URL (e.g. `http://localhost:8000/mcp`). Any client can connect to it, even from a different machine, and multiple clients can connect to the same running server at once.
+**HTTP** (the modern "Streamable HTTP" transport) — the server runs on its own, listening on a network port/URL (e.g. `http://localhost:8500/mcp`, our own `server_http.py` from Q14). Any client can connect to it, even from a different machine, and multiple clients can connect to the same running server at once.
 
 **Simple analogy:** stdio is like whispering to someone standing right next to you — only works in the same room (same machine). HTTP is like calling a phone number — the server has an address, and anyone, anywhere, can dial in.
 
-**Example:** Claude Desktop's config gives a `command` + `args` (`python.exe server.py`) and launches the process itself — that's stdio. A hosted MCP server a whole team connects to via a shared URL would be HTTP.
+**Example:** Claude Desktop's config gives a `command` + `args` (`python.exe server_stdio.py`) and launches the process itself — that's stdio. Our own `server_http.py` (Q14) is the HTTP side — a hosted server anyone with the URL can connect to.
 
 ---
 
@@ -108,9 +108,11 @@ The matching `id: 2` on both sides is how the client knows which request this re
 
 ### Q6: What did we actually build in this project?
 
-A Python MCP server (`server.py`) using `FastMCP` from the official `mcp` SDK. It exposes 5 read-only tools — `list_employees`, `get_employee`, `search_employees`, `get_salary_history`, `department_salary_summary` — that query a Postgres DB (`employee`/`salary` tables).
+A Python MCP server using `FastMCP` from the official `mcp` SDK, exposing 5 read-only tools — `list_employees`, `get_employee`, `search_employees`, `get_salary_history`, `department_salary_summary` — that query a Postgres DB (`employee`/`salary` tables), plus 3 resources and 1 prompt (see Q2).
 
 Each tool is just a normal Python function with `@mcp.tool()` on top. The docstring becomes the tool's description and the type hints become its input schema — both shown to the LLM client automatically, no separate config needed.
+
+It later became **two** files, `server_stdio.py` and `server_http.py` — same tools, but each fully independent with its own `FastMCP` instance, one per transport (Q14).
 
 ---
 
@@ -129,7 +131,7 @@ Each tool is just a normal Python function with `@mcp.tool()` on top. The docstr
 
 ### Q8: How does `mcp dev` work, and when do we use it?
 
-`mcp dev server.py` (from `mcp[cli]`) does two things at once: (1) launches `server.py` as a subprocess over stdio, exactly like a real client would, and (2) starts a local web app — the **Inspector** — that acts as a stand-in MCP client with a UI, so you can click "List Tools" / "Call Tool" and see the raw JSON-RPC requests/responses.
+`mcp dev server_stdio.py` (from `mcp[cli]`) does two things at once: (1) launches `server_stdio.py` as a subprocess over stdio, exactly like a real client would, and (2) starts a local web app — the **Inspector** — that acts as a stand-in MCP client with a UI, so you can click "List Tools" / "Call Tool" and see the raw JSON-RPC requests/responses.
 
 Use it while actively building/debugging tools — it's the fastest feedback loop, since you don't need Claude Desktop or Postman set up just to check a tool works.
 
@@ -137,11 +139,11 @@ Use it while actively building/debugging tools — it's the fastest feedback loo
 
 ### Q9: How can we access/test our server from different clients?
 
-- **MCP Inspector** (`mcp dev server.py`) — browser UI, best for development, shows raw protocol traffic.
-- **Postman** — create an "MCP Request", transport = `STDIO`, give it the command (`python.exe`) and args (`server.py`). Postman spawns the process the same way Inspector does and calls tools from a GUI form.
+- **MCP Inspector** (`mcp dev server_stdio.py`) — browser UI, best for development, shows raw protocol traffic.
+- **Postman** — create an "MCP Request", transport = `STDIO`, give it the command (`python.exe`) and args (`server_stdio.py`). Postman spawns the process the same way Inspector does and calls tools from a GUI form.
 - **Claude Desktop** — add an entry under `mcpServers` in `claude_desktop_config.json` pointing to the same command/args. Then you just talk to it in natural language and the LLM decides which tool to call.
 
-All three are different **clients** speaking the same protocol to the same unchanged `server.py` — that's the whole point of a standard.
+All three are different **clients** speaking the same protocol to the same unchanged `server_stdio.py` — that's the whole point of a standard.
 
 ---
 
@@ -151,36 +153,34 @@ All three are different **clients** speaking the same protocol to the same uncha
 2. Transport: `STDIO`.
 3. One single command field — interpreter + script together, not separate fields:
    ```
-   D:\Aslase\Practice\MCP\venv\Scripts\python.exe D:\Aslase\Practice\MCP\server.py
+   D:\Aslase\Practice\MCP\venv\Scripts\python.exe D:\Aslase\Practice\MCP\server_stdio.py
    ```
-4. Click **Connect** — Postman spawns `server.py` as a subprocess and does the `initialize` handshake for you.
+4. Click **Connect** — Postman spawns `server_stdio.py` as a subprocess and does the `initialize` handshake for you.
 5. Click **Load capabilities** — sends `tools/list`, `resources/list`, `prompts/list` and populates the sidebar.
 6. Pick one (e.g. `get_employee`), fill in `employee_id`, hit **Run** — see the JSON result.
 
 **Gotcha:** a *resource template* (URI with `{param}`, like `employees://{employee_id}`) is a different protocol call (`resources/templates/list`) than a plain resource (`resources/list`). If you only register templates, Postman's "Resources" tab can show "No resources found" even though everything is working — check for a separate templates section before assuming it's broken.
 
-No extra config needed for `.env` — `server.py` loads it itself via `load_dotenv()` from its own folder, regardless of who launched it.
+No extra config needed for `.env` — `server_stdio.py` loads it itself via `load_dotenv()` from its own folder, regardless of who launched it.
 
 ---
 
 ### Q11: How do I connect this with Claude Desktop?
 
-1. Install Claude Desktop, launch it once (creates `%APPDATA%\Claude`), then fully quit it.
-2. Open/create `%APPDATA%\Claude\claude_desktop_config.json` and add:
-   ```json
-   {
-     "mcpServers": {
-       "employee-salary-server": {
-         "command": "D:\\Aslase\\Practice\\MCP\\venv\\Scripts\\python.exe",
-         "args": ["D:\\Aslase\\Practice\\MCP\\server.py"]
-       }
-     }
-   }
-   ```
-   (merge into any existing `mcpServers` entries — don't overwrite them.)
-3. Restart Claude Desktop.
-4. Look for the tool/plug icon near the chat box — click it, `employee-salary-server` should be listed as connected with its tools/resources/prompts.
-5. Ask a plain-English question (e.g. "list employees in Engineering") — Claude's LLM reads the tool schemas and decides which one to call.
+**Actual working method (not the `%APPDATA%\Claude` path I originally guessed):** Claude Desktop → **Settings → Developer tab → Edit Config**. That button opens `claude_desktop_config.json` directly — no need to hunt for the folder yourself. (On this machine it turned out to live under a Microsoft Store app-container path, `...\AppData\Local\Packages\Claude_<id>\LocalCache\Roaming\Claude\`, since this install came from the Store — "Edit Config" sidesteps needing to know that.)
+
+Add (merge into any existing `mcpServers` entries — don't overwrite them):
+```json
+{
+  "mcpServers": {
+    "employee-salary-server": {
+      "command": "D:\\Aslase\\Practice\\MCP\\venv\\Scripts\\python.exe",
+      "args": ["D:\\Aslase\\Practice\\MCP\\server_stdio.py"]
+    }
+  }
+}
+```
+Restart Claude Desktop, then look for the tool/plug icon near the chat box — click it, `employee-salary-server` should be listed as connected with its tools/resources/prompts. Ask a plain-English question (e.g. "list employees in Engineering") and Claude's LLM reads the tool schemas and decides which one to call.
 
 ---
 
@@ -203,3 +203,51 @@ Only **metadata** is available all the time — the list of tool names/schemas, 
 - **Prompts** — also user-triggered, like picking a slash-command from a menu.
 
 **Example:** right after connecting, Claude "knows" `employees://all` exists the same way you know a name exists in a phone directory — it hasn't read the CSV. Ask "who's in Engineering?" and Claude calls the `list_employees` **tool**, getting the answer in that same turn. But the `employees://all` **resource**'s actual content only shows up if it's explicitly attached — same idea as attaching a PDF to a chat.
+
+---
+
+### Q14: How do we expose the same tools/resources/prompts over HTTP, with some form of identification?
+
+Same server, same tools — just a different transport. `mcp.streamable_http_app()` turns our `FastMCP` instance into a normal Starlette ASGI app listening at `/mcp`, instead of talking over stdin/stdout. We run that with `uvicorn` (a real web server), so it opens an actual network port — this is the "phone number" side of Q4, where before we only had the "whisper next to you" side.
+
+**Identification = a shared secret (Bearer token).** Since anyone who can reach the port can now call our tools, we wrap the app in a small `BearerAuthMiddleware` that checks every request's `Authorization` header against `MCP_API_KEY` (stored in `.env`, same pattern as our DB credentials) and rejects it with `401` if it doesn't match.
+
+**Two fully independent files, on purpose:** `server_stdio.py` and `server_http.py` share **no imports at all** — each defines its own `FastMCP` instance, its own `get_connection`/`run_query`, and its own copies of every tool/resource/prompt. That's a deliberate choice for learning: connecting to one has zero chance of accidentally affecting the other, at the cost of duplicated code (in a real project you'd factor the shared logic into a common module both files import). `server_http.py` additionally wraps its app in the auth middleware and runs it via `uvicorn.run(app, host="127.0.0.1", port=8500)`.
+
+**To test:** run `python server_http.py`, then in Postman create an MCP Request with transport = **Streamable HTTP**, URL = `http://127.0.0.1:8500/mcp`, and a header `Authorization: Bearer learn-mcp-http-key`. Remove that header and reconnect — you should get a `401` instead of the tool list, which is the "identification" actually doing its job.
+
+**Note:** a Bearer token is the simplest possible form of identification — good for learning, not for production. Real-world MCP HTTP servers typically use full OAuth (the `mcp` SDK has `auth_server_provider`/`token_verifier` support for that), which is a much deeper topic than what we needed here.
+
+---
+
+### Q15: How do I connect `server_http.py` to Claude Desktop?
+
+**First attempt failed:** a `url`/`headers` entry got rejected — "Some MCP servers could not be loaded... employee-salary-server-http" — because this build's `mcpServers` JSON only validates `command`/`args` (stdio) entries. There's no native way to tell Claude Desktop "connect to a remote HTTP URL with this header."
+
+**Working fix: `mcp-remote`, a stdio↔HTTP bridge.** It's a small npm package whose whole job is to look like a normal stdio server to Claude Desktop, while internally opening an HTTP connection (with custom headers) to the real remote server:
+
+```json
+"employee-salary-server-http": {
+  "command": "npx",
+  "args": [
+    "-y",
+    "mcp-remote@latest",
+    "http://127.0.0.1:8500/mcp",
+    "--allow-http",
+    "--transport",
+    "http-only",
+    "--header",
+    "Authorization:${AUTH_HEADER}"
+  ],
+  "env": {
+    "AUTH_HEADER": "Bearer learn-mcp-http-key"
+  }
+}
+```
+
+What each piece does:
+- `npx -y mcp-remote@latest <url> ...` — downloads/runs `mcp-remote` on the fly; from Claude Desktop's point of view this is just another `command`/`args` stdio process, identical in shape to `server_stdio.py`'s entry.
+- `--transport http-only` / `--allow-http` — force plain Streamable HTTP (our server isn't HTTPS, which `mcp-remote` otherwise refuses by default).
+- `--header "Authorization:${AUTH_HEADER}"` — the header `mcp-remote` forwards to our server on every request; `${AUTH_HEADER}` is filled in from the sibling `env` block rather than hardcoded directly in `args`, so the token isn't sitting in plaintext in the visible process argument list.
+
+**The real lesson here:** stdio is the *universal adapter*. Even to reach a remote HTTP server, Claude Desktop still only ever spawns local stdio processes — it never speaks HTTP itself. `mcp-remote` is a generic translator standing in between: stdio on the Claude Desktop side, HTTP (with headers) on our server's side. Same idea as Postman using two different transport modes for the same server, just automated into one bridge process instead of a UI toggle.

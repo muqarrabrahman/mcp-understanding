@@ -4,12 +4,15 @@ import pathlib
 
 import psycopg2
 import psycopg2.extras
+import uvicorn
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 load_dotenv()
 
-mcp = FastMCP("employee-salary-server")
+mcp = FastMCP("employee-salary-server-http")
 
 
 def get_connection():
@@ -162,5 +165,20 @@ def salary_review_prompt(employee_id: int) -> str:
     )
 
 
+API_KEY = os.environ["MCP_API_KEY"]
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Rejects any request that doesn't send our shared key as 'Authorization: Bearer <key>'."""
+
+    async def dispatch(self, request, call_next):
+        if request.headers.get("Authorization") != f"Bearer {API_KEY}":
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+app = mcp.streamable_http_app()
+app.add_middleware(BearerAuthMiddleware)
+
 if __name__ == "__main__":
-    mcp.run()
+    uvicorn.run(app, host="127.0.0.1", port=8500)
