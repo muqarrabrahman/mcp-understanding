@@ -251,3 +251,17 @@ What each piece does:
 - `--header "Authorization:${AUTH_HEADER}"` — the header `mcp-remote` forwards to our server on every request; `${AUTH_HEADER}` is filled in from the sibling `env` block rather than hardcoded directly in `args`, so the token isn't sitting in plaintext in the visible process argument list.
 
 **The real lesson here:** stdio is the *universal adapter*. Even to reach a remote HTTP server, Claude Desktop still only ever spawns local stdio processes — it never speaks HTTP itself. `mcp-remote` is a generic translator standing in between: stdio on the Claude Desktop side, HTTP (with headers) on our server's side. Same idea as Postman using two different transport modes for the same server, just automated into one bridge process instead of a UI toggle.
+
+---
+
+### Q16: Can I build my own client instead of using Claude Desktop/Postman/Inspector?
+
+Yes — a "client" is just anything that speaks MCP's JSON-RPC and hands tool results to an LLM. We built our own in a new `agent/` folder, using **LangGraph** (an agent-building library) + **`langchain-mcp-adapters`** (converts MCP tools into LangChain tools automatically) + **`ChatOpenAI`** pointed at Compass (our company's OpenAI-API-compatible gateway to `gpt-5.2`), instead of an OpenAI/Anthropic key directly.
+
+Two files, same independent-files philosophy as `server_stdio.py`/`server_http.py` (Q14) — no imports between them:
+- **`agent_stdio.py`** — `MultiServerMCPClient({"employee_salary": {"transport": "stdio", "command": ..., "args": [...]}})`. Spawns `server_stdio.py` itself, same as Claude Desktop does.
+- **`agent_http.py`** — `MultiServerMCPClient({"employee_salary": {"transport": "streamable_http", "url": "http://127.0.0.1:8500/mcp", "headers": {"Authorization": "Bearer ..."}}})`. Connects to an already-running `server_http.py` instead of spawning anything — same distinction as Q4.
+
+The actual "agent" part is one line: `create_agent(model, tools)` (from `langchain.agents` — note: `langgraph.prebuilt.create_react_agent` is the *same idea* but deprecated in favor of this). It builds a full tool-calling loop for you: read the question → let the model decide whether to call a tool → call it via MCP → feed the result back → repeat until there's a final answer. This is the exact loop from Q7, just implemented by a library instead of hand-rolled JSON-RPC calls.
+
+**Gotcha that cost real debugging time:** `load_dotenv()` does **not** override environment variables that already exist in the process — it only fills in ones that are missing. If a stale `COMPASS_API_KEY` was already set somewhere in the environment, `load_dotenv()` silently keeps the stale one instead of the `.env` file's value. Fix: `load_dotenv(override=True)`, which forces `.env` to win. Worth remembering any time an env var change doesn't seem to take effect.
